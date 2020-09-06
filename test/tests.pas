@@ -120,6 +120,7 @@ type
     procedure RunTest64;
     procedure RunTest65;
     procedure RunTest66;
+    procedure RunTest67;
   end;
 
 implementation
@@ -151,7 +152,7 @@ end;
 
 
 const
-  testCases: array [1 .. 66] of TRegExTest = (
+  testCases: array [1 .. 67] of TRegExTest = (
     // 1
     (
     expression: '\nd';
@@ -568,7 +569,7 @@ const
     expectedResult: 'ok%200 @_';
     matchStart: 15
     ),
-    // 53, lookahead aa(?!bb)
+    // 53, negative lookahead aa(?!bb)
     (
     expression: 'a+(?!\w)';
     inputText: 'aabaaddaaazaaa=aau';
@@ -576,7 +577,7 @@ const
     expectedResult: 'aaa';
     matchStart: 12
     ),
-    // 54, lookahead aa(?!bb)
+    // 54, negative lookahead aa(?!bb)
     (
     expression: '(?:\s+)\w{2,}\.(?!com|org|net)';
     inputText: '  www.com  www.org  www.ok  www.net';
@@ -679,6 +680,14 @@ const
     substitutionText: '-';
     expectedResult: '-'#13#10;
     matchStart: 1
+    ),
+    // 67
+    ( // negative lookbehind (?<!foo)bar
+    expression: '(?<!foo)bar';
+    inputText: ' foobar okbar';
+    substitutionText: '';
+    expectedResult: 'bar';
+    matchStart: 11
     )
   );
 
@@ -1100,6 +1109,11 @@ end;
 procedure TTestRegexpr.RunTest66;
 begin
   RunRETest(66);
+end;
+
+procedure TTestRegexpr.RunTest67;
+begin
+  RunRETest(67);
 end;
 
 

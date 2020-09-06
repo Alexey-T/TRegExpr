@@ -252,6 +252,7 @@ type
     GrpNames: array [0 .. RegexMaxGroups - 1] of RegExprString; // names of groups, if non-empty
     GrpAtomic: array [0 .. RegexMaxGroups - 1] of boolean; // group[i] is atomic (filled in Compile)
     GrpAtomicDone: array [0 .. RegexMaxGroups - 1] of boolean; // atomic group[i] is "done" (used in Exec* only)
+    GrpNegative: array [0 .. RegexMaxGroups - 1] of boolean; // group[i] is negative lookaround (ahead or behind)
     GrpOpCodes: array [0 .. RegexMaxGroups - 1] of PRegExprChar; // pointer to opcode of group[i] (used by OP_SUBCALL*)
     GrpSubCalled: array [0 .. RegexMaxGroups - 1] of boolean; // group[i] is called by OP_SUBCALL*
     GrpCount: integer;
@@ -779,7 +780,7 @@ uses
 const
   // TRegExpr.VersionMajor/Minor return values of these constants:
   REVersionMajor = 1;
-  REVersionMinor = 144;
+  REVersionMinor = 146;
 
   OpKind_End = REChar(1);
   OpKind_MetaClass = REChar(2);
@@ -817,6 +818,7 @@ type
     gkLookahead,
     gkLookaheadNeg,
     gkLookbehind,
+    gkLookbehindNeg,
     gkRecursion,
     gkSubCall
     );
@@ -3788,6 +3790,18 @@ begin
                       regLookbehind := True;
                       Inc(regParse, 3);
                     end;
+                  '!':
+                    begin
+                      // allow lookbehind only at the beginning?
+                      if regParse <> fRegexStart + 1 then
+                        Error(reeLookbehindBad);
+
+                      GrpKind := gkLookbehindNeg;
+                      GrpNegative[regNumBrackets] := True;
+                      GrpAtomic[regNumBrackets] := RegExprLookbehindIsAtomic;
+                      regLookbehind := True;
+                      Inc(regParse, 3);
+                    end;
                   else
                     Error(reeLookbehindBad);
                 end;
@@ -3806,6 +3820,7 @@ begin
                 else
                 begin
                   GrpKind := gkLookaheadNeg;
+                  GrpNegative[regNumBrackets] := True;
                   regLookaheadNeg := True;
                 end;
                 GrpAtomic[regNumBrackets] := RegExprLookaheadIsAtomic;
@@ -3896,7 +3911,8 @@ begin
           gkNonCapturingGroup,
           gkLookahead,
           gkLookaheadNeg,
-          gkLookbehind:
+          gkLookbehind,
+          gkLookbehindNeg:
             begin
               // skip this block for one of passes, to not double groups count;
               // must take first pass (we need GrpNames filled)
@@ -4955,21 +4971,30 @@ begin
           Result := MatchPrim(next);
           if not Result then // ###0.936
             GrpStart[no] := save;
-          // handle negative lookahead
-          if regLookaheadNeg then
-            if no = regLookaheadGroup then
+
+          // handle negative lookaround
+          if GrpNegative[no] then
+          begin
+            Result := not Result;
+            if Result then
             begin
-              Result := not Result;
-              if Result then
-              begin
-                // we need zero length of "lookahead group",
-                // it is later used to adjust the match
-                GrpStart[no] := regInput;
-                GrpEnd[no]:= regInput;
-              end
-              else
-                GrpStart[no] := save;
-            end;
+              // we need zero length of "lookahead group",
+              // it is later used to adjust the match
+              GrpStart[no] := regInput;
+              GrpEnd[no]:= regInput;
+              // jump after group ending:
+              // OP_OPEN+i -> OP_BRANCH -> OP_BRANCH -> ... -> OP_BRANCH -> OP_CLOSE+i -> next
+              scan := regNext(scan);
+              repeat
+                scan := regNext(scan);
+              until scan^ <> OP_BRANCH;
+              scan := regNext(scan);
+              Result := MatchPrim(scan);
+            end
+            else
+              GrpStart[no] := save;
+          end;
+
           Exit;
         end;
 
@@ -5361,6 +5386,7 @@ begin
 end;
 
 procedure TRegExpr.ClearMatches;
+// clear fields set by matching
 begin
   FillChar(GrpStart, SizeOf(GrpStart), 0);
   FillChar(GrpEnd, SizeOf(GrpEnd), 0);
@@ -5370,6 +5396,7 @@ begin
 end;
 
 procedure TRegExpr.ClearInternalIndexes;
+// clear fields set by compiling
 var
   i: integer;
 begin
@@ -5378,6 +5405,7 @@ begin
 
   FillChar(GrpAtomic, SizeOf(GrpAtomic), 0);
   FillChar(GrpAtomicDone, SizeOf(GrpAtomicDone), 0);
+  FillChar(GrpNegative, SizeOf(GrpNegative), 0);
   FillChar(GrpSubCalled, SizeOf(GrpSubCalled), 0);
   FillChar(GrpOpCodes, SizeOf(GrpOpCodes), 0);
 
@@ -6026,7 +6054,9 @@ begin
 
       OP_OPEN_FIRST .. OP_OPEN_LAST:
         begin
-          FillFirstCharSet(Next);
+          // for negative group, must skip all its opcode
+          if not GrpNegative[Ord(scan^) - Ord(OP_OPEN)] then
+            FillFirstCharSet(Next);
           Exit;
         end;
 
